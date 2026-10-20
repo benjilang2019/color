@@ -9,9 +9,9 @@ Within each condition, the participant is assigned with equal probability to one
 
 ## Design revision
 
-The interface is intentionally styled to resemble a Stanford Qualtrics survey more closely than the first version:
+The interface is intentionally styled to resemble the original Qualtrics survey more closely than the first version, while using University of Pennsylvania branding:
 
-- Stanford-cardinal header treatment
+- University of Pennsylvania logo in the survey header
 - narrow white survey page
 - Qualtrics-like typography and question spacing
 - radio-style answer rows
@@ -20,7 +20,7 @@ The interface is intentionally styled to resemble a Stanford Qualtrics survey mo
 - separate round feedback pages
 - responsive layout for desktop and mobile
 
-The original linked Qualtrics survey is JavaScript-rendered and cannot be programmatically inspected from this build environment, so the visual treatment is based on Stanford's current Qualtrics theme conventions and the experiment flow described in the paper / supplement. The study logic remains faithful to the requested 16- and 20-round conditions.
+The original linked Qualtrics survey is JavaScript-rendered and cannot be programmatically inspected from this build environment, so the overall survey layout follows the prior Qualtrics-style recreation and the experiment flow described in the paper / supplement. The header now uses the supplied University of Pennsylvania logo. The study logic remains faithful to the requested 16- and 20-round conditions.
 
 ## Experimental flow
 
@@ -84,7 +84,7 @@ GitHub Pages cannot store participants' responses on its own. This version there
 ## Files
 
 - `index.html` - page shell
-- `style.css` - Stanford / Qualtrics-like theme
+- `style.css` - Penn-branded Qualtrics-like theme
 - `app.js` - randomization, experiment flow, logging, CSV export
 - `data/16_5_8.csv` - supplied 16-round sender sequences
 - `data/20_6_10.csv` - supplied 20-round sender sequences
