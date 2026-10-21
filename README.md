@@ -1,95 +1,88 @@
-# Mind Reading Game - GitHub Pages replication
+# Mind Reading Game - GitHub Pages version
 
-This is a static GitHub Pages implementation of the color / mind-reading experiment described in Guilbeault, Caplan & Yang (2026), restricted to the two conditions requested for this replication:
+This build uses the University of Pennsylvania header and reproduces the requested Sender/Receiver color-choice task. It works both on GitHub Pages and when `index.html` is opened directly from disk.
 
-- **Experiment 16**: 16 rounds, 5/8 red overall (10 red, 6 blue)
-- **Experiment 20**: 20 rounds, 6/10 red overall (12 red, 8 blue)
+## Random assignment
 
-Within each condition, the participant is assigned with equal probability to one of the **three supplied sender sequences**. `1 = red`, `0 = blue`.
+At the start of the game, the browser performs two independent random assignments:
 
-## Design revision
+1. Equal-probability assignment to one of the two supplied stimulus sets:
+   - `16_5_8.csv` -> 16 rounds
+   - `20_6_10.csv` -> 20 rounds
+2. Equal-probability assignment to column 1, 2, or 3 within the selected stimulus set.
 
-The interface is intentionally styled to resemble the original Qualtrics survey more closely than the first version, while using University of Pennsylvania branding:
+The selected column is read top-to-bottom as the Sender's sequence:
 
-- University of Pennsylvania logo in the survey header
-- narrow white survey page
-- Qualtrics-like typography and question spacing
-- radio-style answer rows
-- right-aligned red Next / Submit controls
-- one-question-per-page interaction pattern
-- separate round feedback pages
-- responsive layout for desktop and mobile
+- `1 = red`
+- `0 = blue`
 
-The original linked Qualtrics survey is JavaScript-rendered and cannot be programmatically inspected from this build environment, so the overall survey layout follows the prior Qualtrics-style recreation and the experiment flow described in the paper / supplement. The header now uses the supplied University of Pennsylvania logo. The study logic remains faithful to the requested 16- and 20-round conditions.
+The two supplied CSV matrices are embedded directly in `app.js`. There is no `data/` folder and no external CSV file is loaded at runtime, so local testing does not require `fetch()` or a local web server.
 
 ## Experimental flow
 
-1. Participant ID entry.
-2. Sender / Receiver task explanation.
-3. Participant is told they have been assigned the **Receiver** role (as in the original experiment, all participants actually play Receiver).
-4. Scrambler / noisy-signal instructions.
-5. Random assignment to Experiment 16 or Experiment 20 (50/50).
-6. Random assignment to Sequence 1, 2, or 3 (1/3 each).
-7. Round-by-round red / blue prediction with feedback.
-8. Final question: which color was the partner's preferred choice all along?
-9. Download of a trial-level CSV response file.
+- Participants are told that matching the partner wins $0.05 and failing to match loses $0.05.
+- The running amount is never allowed to fall below $0.00.
+- Every participant is assigned the Receiver role.
+- Participants receive the scrambler/noisy-signal explanation and a reminder that their total amount can never fall below $0.00.
+- Before every training round, the screen displays **"Waiting for your partner to make a selection ...."** for exactly 3 seconds.
+- The participant-facing screens do **not** display the round number or total number of rounds while training data are presented.
+- The participant then selects BLUE or RED.
+- Correct feedback reads: **"Correct! You matched your partner's selection and won $0.05!"**
+- Incorrect feedback reads: **"Incorrect! You didn't match your partner's selection and lost $0.05."**
+- Every feedback screen displays the current total amount.
+- After all 16 or 20 training rounds, participants answer: **"What do you think your partner's true choice was?"** with BLUE and RED as options.
+- The participant then downloads the result CSV.
 
-## Data fields
+## Output CSV
 
-The CSV contains:
+Each trial records:
 
-- participant_id
-- session_id
-- experiment
-- sequence
-- round
-- sender_signal
-- participant_choice
-- correct
-- rt_ms
-- answered_at
-- final_choice
-- final_rt_ms
-- final_score
-- started_at
-- completed_at
+- participant ID and session ID
+- source CSV filename
+- experiment length
+- randomly assigned sequence column
+- round number
+- Sender selection (`1 = red`, `0 = blue`)
+- participant selection
+- correctness
+- response time and timestamp
+- amount before and after the round
+- final choice and final response time
 
-## GitHub Pages deployment
+The **last line** is a `summary` row. It includes:
 
-1. Create a GitHub repository.
-2. Upload the contents of this directory to the repository root.
-3. Open **Settings -> Pages**.
-4. Choose **Deploy from a branch**.
-5. Select `main` and `/ (root)`.
-6. Save.
+- `red_selection_percentage`: percentage of all training-round selections made by the participant that were RED (16 rounds in Experiment 16; 20 rounds in Experiment 20)
+- `final_selection`: `RED` or `BLUE`
+- `total_amount_usd`: final accumulated amount
 
-The resulting GitHub Pages URL can be used as the experiment link.
+## Participant IDs
 
-## Participant IDs from a recruitment platform
-
-The page automatically reads participant IDs from any of these URL parameters if present:
+If present, any of these URL parameters are used as the participant ID:
 
 - `PROLIFIC_PID`
 - `participant_id`
 - `pid`
 
-Example:
+Otherwise, an anonymous random participant ID is generated.
 
-`https://YOURNAME.github.io/YOURREPO/?PROLIFIC_PID=abc123`
+## Deploy on GitHub Pages
 
-## Important: static hosting
+1. Create a GitHub repository.
+2. Upload the contents of this folder to the repository root.
+3. In GitHub, open **Settings -> Pages**.
+4. Choose **Deploy from a branch**.
+5. Select `main` and `/ (root)`.
+6. Save.
 
-GitHub Pages cannot store participants' responses on its own. This version therefore requires each participant to download the CSV at the end. For unattended online data collection, connect the page to a backend, database, or data-collection service.
+## Local testing
 
-## Files
+Simply double-click `index.html`. No web server is required.
 
-- `index.html` - page shell
-- `style.css` - Penn-branded Qualtrics-like theme
-- `app.js` - randomization, experiment flow, logging, CSV export
-- `data/16_5_8.csv` - supplied 16-round sender sequences
-- `data/20_6_10.csv` - supplied 20-round sender sequences
+## Static-hosting limitation
+
+GitHub Pages cannot centrally store participant data by itself. This version creates a downloadable CSV at the end. A server/database endpoint would be needed for automatic central collection.
 
 
-## CSV summary row
+## Final CSV summary row
 
-The final CSV line is `summary_first_16` and reports `red_guess_percentage_first_16`, the percentage of RED responses across rounds 1-16. For Experiment 16 this covers all training rounds; for Experiment 20 it uses rounds 1-16 only.
+The last line of each downloaded CSV is a `summary` row. `red_selection_percentage` is calculated over **all training rounds in the participant's assigned condition** (16 rounds in Experiment 16 or 20 rounds in Experiment 20). The final column, `final_selection`, records the participant's final `RED` or `BLUE` answer to the question about the partner's true choice.

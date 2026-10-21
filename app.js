@@ -1,391 +1,449 @@
-const SEQUENCES = {
-  16: [
-    [1,0,1,1,0,0,1,1,0,0,1,1,1,1,1,0],
-    [1,0,0,1,1,1,0,1,0,1,1,0,0,1,1,1],
-    [1,1,0,1,1,0,0,1,1,0,1,1,1,0,1,0]
-  ],
-  20: [
-    [1,1,0,0,1,1,1,0,0,1,0,0,1,0,0,1,1,1,1,1],
-    [1,1,1,0,1,1,0,0,0,1,1,1,1,1,0,0,0,0,1,1],
-    [1,0,0,1,1,1,1,1,0,0,0,0,0,1,1,0,1,1,1,1]
-  ]
-};
+// Stimuli are embedded so the experiment works both on GitHub Pages and when
+// index.html is opened directly from disk (file://). The matrices are exact
+// copies of the supplied CSV files. Participants are randomized first to one
+// file and then independently to one of its three columns.
+const DATA_FILES = [
+  {
+    experiment: 16,
+    filename: '16_5_8.csv',
+    matrix: [
+      [1,1,1],[0,0,1],[1,0,0],[1,1,1],
+      [0,1,1],[0,1,0],[1,0,0],[1,1,1],
+      [0,0,1],[0,1,0],[1,1,1],[1,0,1],
+      [1,0,1],[1,1,0],[1,1,1],[0,1,0]
+    ]
+  },
+  {
+    experiment: 20,
+    filename: '20_6_10.csv',
+    matrix: [
+      [1,1,1],[1,1,0],[0,1,0],[0,0,1],[1,1,1],
+      [1,1,1],[1,0,1],[0,0,1],[0,0,0],[1,1,0],
+      [0,1,0],[0,0,0],[1,1,0],[0,1,1],[0,1,1],
+      [1,0,0],[1,0,1],[1,0,1],[1,1,1],[1,1,1]
+    ]
+  }
+];
 
-const page = document.querySelector('#surveyPage');
-const progressFill = document.querySelector('#progressFill');
+const content = document.querySelector('#surveyContent');
+const progressBar = document.querySelector('#progressBar');
 
-const randomIndex = n => {
-  const x = new Uint32Array(1);
-  crypto.getRandomValues(x);
-  return x[0] % n;
-};
+function exactRandomIndex(n) {
+  const max = Math.floor(0x100000000 / n) * n;
+  const buf = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(buf);
+  } while (buf[0] >= max);
+  return buf[0] % n;
+}
 
-const nowISO = () => new Date().toISOString();
-const safeId = s => String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+function nowISO() { return new Date().toISOString(); }
+function safeId(v) { return String(v || '').replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function money(cents) { return `$${(cents / 100).toFixed(2)}`; }
 
-function idFromUrl() {
-  const q = new URLSearchParams(location.search);
-  return q.get('PROLIFIC_PID') || q.get('participant_id') || q.get('pid') || '';
+function participantIdFromUrl() {
+  const p = new URLSearchParams(location.search);
+  return p.get('PROLIFIC_PID') || p.get('participant_id') || p.get('pid') || '';
+}
+
+function randomParticipantId() {
+  const b = new Uint32Array(2);
+  crypto.getRandomValues(b);
+  return `P-${b[0].toString(36)}${b[1].toString(36)}`.toUpperCase();
+}
+
+function makeSessionId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = new Uint32Array(4);
+  crypto.getRandomValues(b);
+  return `S-${Array.from(b, n => n.toString(16).padStart(8, '0')).join('')}`;
 }
 
 let state = {
-  participant_id: idFromUrl(),
-  session_id: crypto.randomUUID(),
+  participant_id: participantIdFromUrl() || randomParticipantId(),
+  session_id: makeSessionId(),
+  source_csv: null,
   experiment: null,
-  sequence: null,
+  sequence_column: null,
+  sequence: [],
   round: 0,
-  score: 0,
   started_at: null,
   completed_at: null,
-  selected_choice: null,
   trials: [],
+  earnings_cents: 0,
   final_choice: null,
-  final_rt_ms: null
+  final_rt_ms: null,
+  phase: 'intro'
 };
 
 let responseStart = 0;
+let clickLocked = false;
+let waitTimer = null;
 
 function setProgress(pct) {
-  progressFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
 }
 
 function render(html, pct = 0) {
-  page.innerHTML = html;
+  content.innerHTML = html;
   setProgress(pct);
-  window.scrollTo({top: 0, behavior: 'instant'});
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
-function nextButton(label = 'Next') {
-  return `<button class="next-button" id="nextButton" type="button">${label}<span class="arrow" aria-hidden="true">→</span></button>`;
+function navButton(label = 'Next') {
+  return `<button type="button" id="nextButton" class="qualtrics-button">${label}</button>`;
 }
 
 function intro() {
+  state.phase = 'intro';
   render(`
-    <div class="question-block">
-      <h1 class="question-title large">Mind Reading Game</h1>
-      <p class="question-copy">Thank you for participating in this research study.</p>
-      <p class="question-copy">Please enter the participant ID provided by the study platform. Do not enter your name.</p>
-    </div>
-
-    <div class="question-block">
-      <label class="field-label" for="participantId">Participant ID</label>
-      <input class="text-input" id="participantId" type="text" autocomplete="off" spellcheck="false" value="${escapeHtml(state.participant_id)}">
-    </div>
-
-    <div class="nav-row">${nextButton()}</div>
-  `, 2);
-
-  const input = document.querySelector('#participantId');
-  document.querySelector('#nextButton').addEventListener('click', () => {
-    const value = input.value.trim();
-    if (!value) {
-      input.focus();
-      input.setAttribute('aria-invalid', 'true');
-      return;
-    }
-    state.participant_id = value;
-    roleIntro();
-  });
+    <section class="qblock">
+      <h1 class="qtitle intro-title">Mind Reading Game</h1>
+      <p class="copy">In this study, you will play a short coordination game with another player.</p>
+      <div class="notice payoff-notice">
+        <strong>Payment rule:</strong> If your selection matches your partner's selection, you win <strong>$0.05</strong>. Otherwise, you lose <strong>$0.05</strong>. Your total amount can never be negative.
+      </div>
+      <p class="copy">Please read the instructions carefully. The task works best if you complete it in one sitting without refreshing the page.</p>
+    </section>
+    <div class="nav-row">${navButton('Next')}</div>
+  `, 4);
+  document.querySelector('#nextButton').addEventListener('click', gameInstructions);
 }
 
-function roleIntro() {
+function gameInstructions() {
+  state.phase = 'instructions';
   render(`
-    <div class="question-block">
-      <h1 class="question-title large">Instructions</h1>
-      <p class="question-copy">In this game, two players try to coordinate on a color choice.</p>
-      <p class="question-copy">One player is the <strong>Sender</strong>. The Sender chooses a color. The other player is the <strong>Receiver</strong>. The Receiver tries to predict which color the Sender chose.</p>
-      <p class="question-copy">You will be assigned a role for this game.</p>
-    </div>
-    <div class="nav-row">${nextButton('Continue')}</div>
-  `, 5);
+    <section class="qblock">
+      <h1 class="qtitle">Instructions</h1>
+      <p class="copy">The game has two roles: a <strong>Sender</strong> and a <strong>Receiver</strong>.</p>
+      <p class="copy">On every round, the Sender selects one of two colors: <strong>blue</strong> or <strong>red</strong>. The Receiver tries to predict which color the Sender selected.</p>
+      <p class="copy">If your selection matches your partner's selection, you win <strong>$0.05</strong>. If it does not match, you lose <strong>$0.05</strong>. Your total amount will never be allowed to fall below <strong>$0.00</strong>.</p>
+      <p class="copy">The goal is to coordinate with your partner as accurately as possible across the game.</p>
+    </section>
+    <div class="nav-row">${navButton('Next')}</div>
+  `, 8);
   document.querySelector('#nextButton').addEventListener('click', roleAssignment);
 }
 
 function roleAssignment() {
+  state.phase = 'role';
   render(`
-    <div class="question-block">
-      <h1 class="question-title large">Your role</h1>
-      <p class="question-copy">Your role for this game is:</p>
-      <div class="role-card">
-        <div class="role-label">You are the</div>
-        <div class="role-name">Receiver</div>
+    <section class="qblock">
+      <h1 class="qtitle">Your role</h1>
+      <p class="copy">You have been assigned to play the following role:</p>
+      <div class="role-box">
+        <div class="label">Your role is</div>
+        <div class="role">Receiver</div>
       </div>
-      <p class="question-copy">Your task is to guess which color your partner, the Sender, wants you to choose on each round.</p>
-    </div>
-    <div class="nav-row">${nextButton()}</div>
-  `, 8);
+      <p class="copy">On each round, your task is to predict the color selected by your partner, the Sender.</p>
+    </section>
+    <div class="nav-row">${navButton('Next')}</div>
+  `, 12);
   document.querySelector('#nextButton').addEventListener('click', scramblerInstructions);
 }
 
 function scramblerInstructions() {
+  state.phase = 'scrambler';
   render(`
-    <div class="question-block">
-      <h1 class="question-title large">Important: the signal may be noisy</h1>
-      <p class="question-copy">On some rounds, a random <strong>scrambler</strong> may interfere with the Sender's signal. When that happens, the information you receive may not reflect what the Sender truly intended.</p>
-      <p class="question-copy">You will not be told when the scrambler is active or how often it is active.</p>
-      <div class="emphasis-box">Try to use the pattern across rounds to work out your partner's underlying color preference.</div>
-      <p class="question-copy">After each round, you will learn whether your prediction matched the signal you received.</p>
-    </div>
-    <div class="nav-row">${nextButton('Begin')}</div>
-  `, 11);
-  document.querySelector('#nextButton').addEventListener('click', startExperiment);
+    <section class="qblock">
+      <h1 class="qtitle">Important information about the signal</h1>
+      <p class="copy">A random <strong>scrambler</strong> can occasionally interfere with the Sender's signal. On some rounds, the signal you receive may therefore be the wrong signal.</p>
+      <p class="copy">You will not be told how often the scrambler operates or on which rounds it is active.</p>
+
+      <div class="scrambler-diagram" aria-label="Sender signal passes through a possible scrambler before reaching the Receiver">
+        <div class="diagram-node"><strong>Sender</strong><span>selects a color</span></div>
+        <div class="diagram-arrow">→</div>
+        <div class="diagram-node"><div class="scrambler-icon">⚄</div><strong>Scrambler</strong><span>may alter the signal</span></div>
+        <div class="diagram-arrow">→</div>
+        <div class="diagram-node"><strong>You</strong><span>guess as Receiver</span></div>
+      </div>
+
+      <div class="notice">Try to infer your partner's underlying color preference from the pattern you observe across rounds, rather than relying on any single round.</div>
+      <div class="notice payoff-notice"><strong>Reminder:</strong> A match adds <strong>$0.05</strong>, a mismatch subtracts <strong>$0.05</strong>, and your total amount can never go below <strong>$0.00</strong>.</div>
+      <p class="copy">Before each round, you will briefly wait while your partner makes a selection. After you choose a color, you will be told whether you matched your partner and your current total amount.</p>
+    </section>
+    <div class="nav-row">${navButton('Begin')}</div>
+  `, 16);
+  document.querySelector('#nextButton').addEventListener('click', assignAndStart);
 }
 
-function startExperiment() {
-  // Equal-probability assignment to Experiment 16 vs Experiment 20,
-  // then equal-probability assignment to one of the three sequences.
-  state.experiment = randomIndex(2) === 0 ? 16 : 20;
-  state.sequence = randomIndex(3) + 1;
-  state.round = 0;
-  state.score = 0;
-  state.started_at = nowISO();
-  state.trials = [];
+function assignAndStart() {
+  render(`<div class="loading">Preparing the game...</div>`, 16);
+
+  try {
+    const file = DATA_FILES[exactRandomIndex(DATA_FILES.length)];
+    const column = exactRandomIndex(3);
+    const matrix = file.matrix;
+
+    if (!Array.isArray(matrix) || matrix.length !== file.experiment) {
+      throw new Error(`${file.filename} should have ${file.experiment} rows.`);
+    }
+    if (matrix.some(row => !Array.isArray(row) || row.length !== 3)) {
+      throw new Error(`${file.filename} must contain exactly three stimulus columns.`);
+    }
+
+    const sequence = matrix.map(row => row[column]);
+    if (sequence.some(v => v !== 0 && v !== 1)) {
+      throw new Error(`${file.filename} contains a value other than 0 or 1.`);
+    }
+
+    state.source_csv = file.filename;
+    state.experiment = file.experiment;
+    state.sequence_column = column + 1;
+    state.sequence = sequence;
+    state.round = 0;
+    state.started_at = nowISO();
+    state.trials = [];
+    state.earnings_cents = 0;
+    state.phase = 'waiting';
+    saveSession();
+    beginNextRound();
+  } catch (err) {
+    render(`
+      <div class="error-box">
+        <strong>The experiment could not initialize its stimuli.</strong><br>
+        ${escapeHtml(err.message)}
+      </div>
+    `, 16);
+  }
+}
+
+function trialProgress() {
+  return 18 + (68 * state.round / state.experiment);
+}
+
+function beginNextRound() {
+  if (waitTimer !== null) {
+    clearTimeout(waitTimer);
+    waitTimer = null;
+  }
+  if (state.round >= state.experiment) {
+    finalQuestion();
+    return;
+  }
+  showWaiting();
+  waitTimer = window.setTimeout(() => {
+    waitTimer = null;
+    showTrial();
+  }, 3000);
+}
+
+function showWaiting() {
+  state.phase = 'waiting';
   saveSession();
-  showTrial();
+  render(`
+    <section class="qblock waiting-wrap" aria-live="polite">
+      <div class="waiting-message">Waiting for your partner to make a selection ....</div>
+    </section>
+  `, trialProgress());
 }
 
 function showTrial() {
-  const total = state.experiment;
-  if (state.round >= total) return finalQuestion();
-
-  state.selected_choice = null;
-  const pct = 12 + (74 * state.round / total);
+  if (state.round >= state.experiment) return finalQuestion();
+  state.phase = 'trial';
+  clickLocked = false;
 
   render(`
-    <div class="round-meta">
-      <span>Round ${state.round + 1} of ${total}</span>
-      <span>Score: ${state.score}</span>
-    </div>
-
-    <div class="question-block">
-      <h1 class="question-title">What color does your partner want you to click on this round?</h1>
-      <div class="choice-list" role="radiogroup" aria-label="Color choice">
-        ${choiceRow(0, 'BLUE')}
-        ${choiceRow(1, 'RED')}
+    <section class="qblock color-question">
+      <div class="color-prompt">What color does your partner want you to click on this round?</div>
+      <div class="color-options" role="radiogroup" aria-label="Choose a color">
+        ${colorButton(0, 'BLUE')}
+        <div class="or" aria-hidden="true">or</div>
+        ${colorButton(1, 'RED')}
       </div>
-    </div>
-
-    <div class="nav-row">
-      <button class="next-button" id="nextButton" type="button" disabled>Next<span class="arrow" aria-hidden="true">→</span></button>
-    </div>
-  `, pct);
+    </section>
+  `, trialProgress());
 
   responseStart = performance.now();
-
-  document.querySelectorAll('.choice-row').forEach(el => {
-    el.addEventListener('click', () => selectChoice(Number(el.dataset.value)));
-    el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        selectChoice(Number(el.dataset.value));
-      }
-    });
+  document.querySelectorAll('.color-choice').forEach(button => {
+    button.addEventListener('click', () => chooseTrialColor(Number(button.dataset.value), button));
   });
-
-  document.querySelector('#nextButton').addEventListener('click', submitTrial);
 }
 
-function choiceRow(value, label) {
-  const cls = value === 1 ? 'red' : 'blue';
+function colorButton(value, label) {
+  const color = value === 1 ? 'red' : 'blue';
   return `
-    <button type="button" class="choice-row" data-value="${value}" role="radio" aria-checked="false">
-      <span class="radio-ring" aria-hidden="true"></span>
-      <span class="color-chip ${cls}" aria-hidden="true"></span>
-      <span class="choice-label">${label}</span>
+    <button type="button" class="color-choice" data-value="${value}" role="radio" aria-checked="false" aria-label="${label}">
+      <span class="color-square ${color}" aria-hidden="true"></span>
+      <span class="color-name">${label}</span>
     </button>
   `;
 }
 
-function selectChoice(value) {
-  state.selected_choice = value;
-  document.querySelectorAll('.choice-row').forEach(el => {
-    const selected = Number(el.dataset.value) === value;
-    el.classList.toggle('selected', selected);
-    el.setAttribute('aria-checked', selected ? 'true' : 'false');
-  });
-  document.querySelector('#nextButton').disabled = false;
-}
-
-function submitTrial() {
-  if (state.selected_choice !== 0 && state.selected_choice !== 1) return;
+function chooseTrialColor(choice, button) {
+  if (clickLocked) return;
+  clickLocked = true;
+  button.classList.add('selected');
+  button.setAttribute('aria-checked', 'true');
 
   const rt = Math.round(performance.now() - responseStart);
-  const signal = SEQUENCES[state.experiment][state.sequence - 1][state.round];
-  const correct = state.selected_choice === signal;
-  state.score = Math.max(0, state.score + (correct ? 1 : -1));
+  const signal = state.sequence[state.round];
+  const correct = choice === signal;
+  const amountBefore = state.earnings_cents;
+  state.earnings_cents = correct
+    ? state.earnings_cents + 5
+    : Math.max(0, state.earnings_cents - 5);
+  const amountAfter = state.earnings_cents;
 
   state.trials.push({
     round: state.round + 1,
     sender_signal: signal,
-    participant_choice: state.selected_choice,
+    participant_choice: choice,
     correct: correct ? 1 : 0,
     rt_ms: rt,
-    answered_at: nowISO()
+    answered_at: nowISO(),
+    amount_before_cents: amountBefore,
+    amount_after_cents: amountAfter
   });
-
+  state.phase = 'feedback';
   saveSession();
-  showFeedback(correct, signal);
+
+  window.setTimeout(() => showFeedback(correct, choice), 180);
 }
 
-function showFeedback(correct, signal) {
-  const total = state.experiment;
-  const pct = 12 + (74 * (state.round + 0.5) / total);
-  const signalLabel = signal === 1 ? 'RED' : 'BLUE';
-  const signalClass = signal === 1 ? 'red' : 'blue';
+function showFeedback(correct, participantChoice) {
+  state.phase = 'feedback';
+  const color = participantChoice === 1 ? 'red' : 'blue';
+  const label = participantChoice === 1 ? 'RED' : 'BLUE';
+  const message = correct
+    ? `Correct! You matched your partner's selection and won $0.05!`
+    : `Incorrect! You didn't match your partner's selection and lost $0.05.`;
 
   render(`
-    <div class="round-meta">
-      <span>Round ${state.round + 1} of ${total}</span>
-      <span>Score: ${state.score}</span>
-    </div>
-
-    <div class="question-block">
-      <h1 class="question-title">Round result</h1>
-      <div class="feedback-panel">
-        <div class="feedback-status ${correct ? 'correct' : 'incorrect'}">${correct ? 'Correct' : 'Incorrect'}</div>
-        <div class="feedback-signal">
-          <span class="color-chip ${signalClass}" aria-hidden="true"></span>
-          <span>The signal received on this round was <strong>${signalLabel}</strong>.</span>
-        </div>
+    <section class="qblock feedback-wrap">
+      <h1 class="feedback-heading ${correct ? 'correct' : 'incorrect'}">${message}</h1>
+      <div class="feedback-choice">
+        <span class="color-square ${color}" aria-hidden="true"></span>
+        <span class="color-name">YOUR CHOICE: ${label}</span>
       </div>
-      <p class="small-copy">Remember: the scrambler may sometimes interfere with the Sender's signal.</p>
-    </div>
-
-    <div class="nav-row">${nextButton()}</div>
-  `, pct);
+      <div class="balance-box">Total amount: <strong>${money(state.earnings_cents)}</strong></div>
+    </section>
+    <div class="nav-row">${navButton('Next')}</div>
+  `, Math.min(86, trialProgress() + (68 / state.experiment) * 0.55));
 
   document.querySelector('#nextButton').addEventListener('click', () => {
     state.round += 1;
+    state.phase = state.round >= state.experiment ? 'final' : 'waiting';
     saveSession();
-    showTrial();
+    beginNextRound();
   });
 }
 
 function finalQuestion() {
+  state.phase = 'final';
+  clickLocked = false;
   render(`
-    <div class="question-block">
-      <h1 class="question-title">Which color do you think was your partner's preferred choice all along?</h1>
-      <p class="question-copy">Think about the entire sequence of rounds before answering.</p>
-      <div class="choice-list" role="radiogroup" aria-label="Final color judgment">
-        ${choiceRow(0, 'BLUE')}
-        ${choiceRow(1, 'RED')}
+    <section class="qblock">
+      <h1 class="qtitle">Final Question</h1>
+      <div class="separator"></div>
+      <div class="color-question final-choice-block">
+        <div class="color-prompt">What do you think your partner's true choice was?</div>
+        <div class="color-options" role="radiogroup" aria-label="Final color judgment">
+          ${colorButton(0, 'BLUE')}
+          <div class="or" aria-hidden="true">or</div>
+          ${colorButton(1, 'RED')}
+        </div>
       </div>
-    </div>
-
+    </section>
     <div class="nav-row">
-      <button class="next-button" id="nextButton" type="button" disabled>Submit<span class="arrow" aria-hidden="true">→</span></button>
+      <button type="button" id="submitButton" class="qualtrics-button" disabled>Submit</button>
     </div>
-  `, 92);
+  `, 94);
 
-  state.selected_choice = null;
+  let selected = null;
   responseStart = performance.now();
+  const submit = document.querySelector('#submitButton');
 
-  document.querySelectorAll('.choice-row').forEach(el => {
-    el.addEventListener('click', () => selectChoice(Number(el.dataset.value)));
-    el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        selectChoice(Number(el.dataset.value));
-      }
+  document.querySelectorAll('.color-choice').forEach(button => {
+    button.addEventListener('click', () => {
+      selected = Number(button.dataset.value);
+      document.querySelectorAll('.color-choice').forEach(b => {
+        const isSelected = b === button;
+        b.classList.toggle('selected', isSelected);
+        b.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+      });
+      submit.disabled = false;
     });
   });
 
-  document.querySelector('#nextButton').addEventListener('click', finishExperiment);
+  submit.addEventListener('click', () => {
+    if (selected !== 0 && selected !== 1) return;
+    state.final_choice = selected;
+    state.final_rt_ms = Math.round(performance.now() - responseStart);
+    state.completed_at = nowISO();
+    state.phase = 'complete';
+    saveSession();
+    completionPage();
+  });
 }
 
-function finishExperiment() {
-  if (state.selected_choice !== 0 && state.selected_choice !== 1) return;
-  state.final_choice = state.selected_choice;
-  state.final_rt_ms = Math.round(performance.now() - responseStart);
-  state.completed_at = nowISO();
-  saveSession();
-
+function completionPage() {
   const csv = buildCsv();
-  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const filename = `mind_reading_${safeId(state.participant_id)}_${state.completed_at.replace(/[:.]/g, '-')}.csv`;
+  const stamp = state.completed_at.replace(/[:.]/g, '-');
+  const filename = `mind_reading_${safeId(state.participant_id)}_${stamp}.csv`;
 
   render(`
-    <div class="question-block">
-      <h1 class="question-title large">Thank you</h1>
-      <p class="question-copy">You have completed the Mind Reading Game.</p>
-      <p class="question-copy">Please download your response file before closing this page.</p>
-      <div class="warning"><strong>Important:</strong> This GitHub Pages version does not send your responses to a server automatically.</div>
-    </div>
-
+    <section class="qblock">
+      <h1 class="qtitle intro-title">Thank you</h1>
+      <p class="copy">You have completed the study.</p>
+      <p class="copy">Your total amount is <strong>${money(state.earnings_cents)}</strong>.</p>
+      <p class="copy">Your participant ID is <strong>${escapeHtml(state.participant_id)}</strong>.</p>
+      <div class="warning"><strong>Please download your response file before closing this page.</strong> This GitHub Pages version stores no responses on a server.</div>
+    </section>
     <div class="nav-row">
-      <a class="download-button" href="${url}" download="${filename}">Download responses (CSV)</a>
+      <a class="qualtrics-button download-button" href="${url}" download="${filename}">Download CSV</a>
     </div>
   `, 100);
-
-  sessionStorage.removeItem('mindReadingState');
 }
 
 function buildCsv() {
-  const cols = [
-    'record_type','participant_id','session_id','experiment','sequence','round',
+  const columns = [
+    'record_type','participant_id','session_id','source_csv','experiment','sequence_column','round',
     'sender_signal','participant_choice','correct','rt_ms','answered_at',
-    'final_choice','final_rt_ms','final_score','started_at','completed_at',
-    'red_guess_percentage_first_16'
+    'amount_before_usd','amount_after_usd','final_rt_ms',
+    'started_at','completed_at','total_amount_usd','final_choice_code',
+    'red_selection_percentage','final_selection'
   ];
 
+  const finalSelection = state.final_choice === 1 ? 'RED' : state.final_choice === 0 ? 'BLUE' : '';
+
+  // Trial rows contain only round-level data. The overall RED percentage and
+  // final RED/BLUE judgment are written only on the final summary row.
   const rows = state.trials.map(t => [
-    'trial',
-    state.participant_id,
-    state.session_id,
-    state.experiment,
-    state.sequence,
-    t.round,
-    t.sender_signal,
-    t.participant_choice,
-    t.correct,
-    t.rt_ms,
-    t.answered_at,
-    state.final_choice,
-    state.final_rt_ms,
-    state.score,
-    state.started_at,
-    state.completed_at,
-    ''
+    'trial', state.participant_id, state.session_id, state.source_csv, state.experiment,
+    state.sequence_column, t.round, t.sender_signal, t.participant_choice, t.correct,
+    t.rt_ms, t.answered_at, (t.amount_before_cents / 100).toFixed(2), (t.amount_after_cents / 100).toFixed(2),
+    '', state.started_at, state.completed_at, (state.earnings_cents / 100).toFixed(2), '', '', ''
   ]);
 
-  // Final summary line: percentage of RED guesses across the first 16 training trials.
-  // For Experiment 16 this is the full training sequence; for Experiment 20 it is
-  // deliberately restricted to rounds 1-16 so the statistic is comparable.
-  const first16 = state.trials.slice(0, 16);
-  const redCountFirst16 = first16.reduce((sum, t) => sum + (t.participant_choice === 1 ? 1 : 0), 0);
-  const redPctFirst16 = first16.length ? (100 * redCountFirst16 / first16.length) : '';
+  // Use every training round in the participant's assigned condition:
+  // 16 rounds for Experiment 16, or 20 rounds for Experiment 20.
+  const redCountAll = state.trials.reduce((sum, t) => sum + (t.participant_choice === 1 ? 1 : 0), 0);
+  const redPctAll = state.trials.length ? (100 * redCountAll / state.trials.length).toFixed(2) : '';
 
-  const summaryRow = [
-    'summary_first_16',
-    state.participant_id,
-    state.session_id,
-    state.experiment,
-    state.sequence,
-    'FIRST_16_SUMMARY',
-    '',
-    '',
-    '',
-    '',
-    '',
-    state.final_choice,
-    state.final_rt_ms,
-    state.score,
-    state.started_at,
-    state.completed_at,
-    redPctFirst16 === '' ? '' : redPctFirst16.toFixed(2)
+  // The final CSV line reports the percentage of training selections that were
+  // RED, followed by the participant's final RED/BLUE choice.
+  const summary = [
+    'summary', state.participant_id, state.session_id, state.source_csv,
+    state.experiment, state.sequence_column, 'SUMMARY', '', '', '', '', '',
+    '', '', state.final_rt_ms, state.started_at, state.completed_at,
+    (state.earnings_cents / 100).toFixed(2), state.final_choice, redPctAll, finalSelection
   ];
 
-  return [cols, ...rows, summaryRow].map(row => row.map(csvEscape).join(',')).join('\n');
+  return [columns, ...rows, summary]
+    .map(row => row.map(csvEscape).join(','))
+    .join('\n');
 }
 
-function csvEscape(value) {
-  const s = String(value ?? '');
-  return /[",\n]/.test(s) ? `"${s.replaceAll('"','""')}"` : s;
+function csvEscape(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }
 
-function escapeHtml(value) {
-  return String(value ?? '')
+function escapeHtml(v) {
+  return String(v ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -394,7 +452,7 @@ function escapeHtml(value) {
 }
 
 function saveSession() {
-  sessionStorage.setItem('mindReadingState', JSON.stringify(state));
+  sessionStorage.setItem('mindReadingStateV7', JSON.stringify(state));
 }
 
 window.addEventListener('beforeunload', event => {

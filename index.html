@@ -4,27 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#011f5b">
+  <meta name="theme-color" content="#ffffff">
   <title>Mind Reading Game</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="survey-shell">
-    <header class="brand-bar" aria-label="Study header">
-      <div class="brand-logo-window"><img class="brand-logo" src="penn-logo.png" alt="University of Pennsylvania"></div>
+  <div class="qualtrics-frame">
+    <header class="survey-header" aria-label="University of Pennsylvania">
+      <img src="penn-logo.png" class="penn-logo" alt="University of Pennsylvania">
     </header>
 
-    <div class="progress-track" aria-hidden="true">
-      <div id="progressFill" class="progress-fill"></div>
+    <div class="progress-wrap" aria-hidden="true">
+      <div id="progressBar" class="progress-bar"></div>
     </div>
 
-    <main id="surveyPage" class="survey-page" aria-live="polite"></main>
+    <main id="surveyContent" class="survey-content" aria-live="polite"></main>
 
-    <footer class="survey-footer">
-      <span>Mind Reading Game</span>
+    <footer class="survey-footer" aria-hidden="true">
+      <span></span>
     </footer>
   </div>
-
   <script src="app.js"></script>
 </body>
 </html>
